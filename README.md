@@ -1,7 +1,7 @@
 # US-road-accident-severity-analysis
 
 
-# Predicting Road Accident Severity in the United States (2016–2023)
+## Predicting Road Accident Severity in the United States (2016–2023)
 
 ## 📌 Project Overview
 This project analyzes road traffic accidents across the United States using the **US Accidents dataset (2016–2023)**. The goal is to **predict accident severity** and identify the most influential environmental, temporal, and road-related factors contributing to severe crashes.
@@ -99,4 +99,4 @@ The study applies **Multiple Linear Regression**, **Logistic Regression**, and *
 
 ---
 
-## 📂 Repository Structure
+
