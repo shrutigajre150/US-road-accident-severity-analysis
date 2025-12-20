@@ -1,0 +1,194 @@
+---
+title: "Project"
+author: "Namitha Kuthani"
+date: "2025-05-01"
+output: pdf_document
+---
+
+```{r}
+# ------------------------------------------------
+# Accident Severity Analysis in the U.S.
+# Goal: Predict and understand accident severity based on weather, traffic, and road-related factors
+# ------------------------------------------------
+
+# Load necessary libraries (install only if not already installed)
+install.packages("corrplot")
+install.packages("usmap")
+install.packages("reshape2")
+
+# Load libraries
+library(dplyr)
+library(lubridate)
+library(car)
+library(randomForest)
+library(corrplot)
+library(tidyverse)
+library(usmap)
+library(reshape2)
+
+# ------------------------------------------------
+# Step 1: Load and sample data (50,000 rows for faster analysis)
+set.seed(123)
+data <- read.csv("US_Accidents_March23.csv")
+small_data <- data[sample(nrow(data), 3000000), ]
+
+# ------------------------------------------------
+# Step 2–3: Select and clean relevant columns
+small_data_selected <- small_data %>%
+  select(Severity, Distance.mi., Temperature.F., Humidity..., 
+         Visibility.mi., Wind_Speed.mph., Pressure.in., Precipitation.in.,
+         Weather_Condition, Start_Time, Sunrise_Sunset, Traffic_Signal, State,
+         Bump, Crossing, Give_Way, Junction, No_Exit, Railway,
+         Roundabout, Station, Stop, Traffic_Calming, Turning_Loop) %>%
+  drop_na()
+
+# ------------------------------------------------
+# Step 4: Rename columns for clarity
+small_data_clean <- small_data_selected %>%
+  rename(
+    Distance = Distance.mi.,
+    Temperature = Temperature.F.,
+    Humidity = Humidity...,
+    Visibility = Visibility.mi.,
+    Wind_Speed = Wind_Speed.mph.,
+    Pressure = Pressure.in.,
+    Precipitation = Precipitation.in.
+  )
+
+# ------------------------------------------------
+# Step 5: Feature engineering (create derived variables)
+small_data_clean <- small_data_clean %>%
+  mutate(
+    Start_Hour = hour(ymd_hms(Start_Time)),
+    Rush_Hour = ifelse(Start_Hour %in% c(7:9, 16:18), 1, 0),
+    Weekend = ifelse(weekdays(ymd_hms(Start_Time)) %in% c("Saturday", "Sunday"), 1, 0),
+    Weather_Simple = case_when(
+      Weather_Condition %in% c("Clear", "Fair", "Fair / Windy", "Scattered Clouds") ~ "Clear",
+      Weather_Condition %in% c("Cloudy", "Mostly Cloudy", "Overcast", "Partly Cloudy", "Partly Cloudy / Windy", "Mostly Cloudy / Windy", "Cloudy / Windy") ~ "Cloudy",
+      Weather_Condition %in% c("Rain", "Light Rain", "Heavy Rain", "Drizzle", "Light Drizzle", "Light Rain / Windy", "Heavy Rain / Windy", "Rain / Windy", "Light Drizzle / Windy") ~ "Rainy",
+      Weather_Condition %in% c("Snow", "Light Snow", "Heavy Snow", "Snow / Windy", "Blowing Snow / Windy", "Snow and Sleet", "Snow and Thunder", "Sleet", "Light Sleet", "Wintry Mix") ~ "Snowy",
+      Weather_Condition %in% c("T-Storm", "Thunder", "Thunderstorm", "Heavy Thunderstorms and Rain") ~ "Thunderstorm",
+      Weather_Condition %in% c("Fog", "Shallow Fog", "Patches of Fog", "Haze", "Haze / Windy", "Smoke", "Mist") ~ "Foggy",
+      Weather_Condition %in% c("Light Freezing Rain", "Light Freezing Drizzle") ~ "Freezing",
+      TRUE ~ "Other"
+    ),
+    Is_Daytime = ifelse(Sunrise_Sunset == "Day", 1, 0),
+    Traffic_Signal_Flag = ifelse(Traffic_Signal == "True", 1, 0)
+  )
+
+# ------------------------------------------------
+# Step 6: Create Road_Features (composite variable from multiple indicators)
+road_cols <- c("Bump", "Crossing", "Give_Way", "Junction", "No_Exit", "Railway",
+               "Roundabout", "Station", "Stop", "Turning_Loop")
+
+small_data_clean[road_cols] <- lapply(small_data_clean[road_cols], function(x) x == "True")
+small_data_clean$Road_Features <- as.integer(rowSums(small_data_clean[road_cols]) > 0)
+
+# ------------------------------------------------
+# Step 7: Filter cleaned dataset
+accident_data <- small_data_clean %>%
+  filter(Weather_Simple %in% c("Clear", "Cloudy", "Rainy", "Snowy", "Freezing")) %>%
+  mutate(
+    Weather_Simple = as.factor(Weather_Simple),
+    Severity = as.numeric(Severity),
+    State = as.factor(State)
+  )
+
+# ------------------------------------------------
+# Step 8A: Fit full multiple linear regression model
+model_mlr_full <- lm(Severity ~ Distance + Temperature + Humidity + Visibility + 
+                     Wind_Speed + Pressure + Precipitation + Weather_Simple + 
+                     Rush_Hour + Weekend + Is_Daytime + Traffic_Signal_Flag + 
+                     Road_Features + State, 
+                     data = accident_data)
+
+summary(model_mlr_full)
+vif(model_mlr_full)
+
+# ------------------------------------------------
+# Step 8B: Fit reduced model using only significant predictors and states
+significant_states <- c("AZ", "CA", "CO", "FL", "GA", "IA", "IL", "IN", "KY", "LA", "MA", "ME", "MI", "MN", "MO", "MT", "NC", "NH", "NM", "OH", "OK", "OR", "RI", "SC", "WA", "WI", "WV", "WY")
+
+accident_data_reduced <- accident_data %>%
+  filter(State %in% significant_states & Weather_Simple %in% c("Clear", "Cloudy", "Freezing", "Rainy")) %>%
+  mutate(
+    Weather_Simple = factor(Weather_Simple),
+    State = factor(State)
+  )
+
+model_mlr_reduced <- lm(Severity ~ Distance + Temperature + Humidity + Wind_Speed +
+                        Weather_Simple + Weekend + Traffic_Signal_Flag + Road_Features + State,
+                        data = accident_data_reduced)
+
+summary(model_mlr_reduced)
+vif(model_mlr_reduced)
+
+# ------------------------------------------------
+# Step 9: Diagnostics for reduced model
+par(mfrow = c(1,2), mar = c(4.5,4.5,2,2))
+plot(predict(model_mlr_reduced), rstandard(model_mlr_reduced),
+     xlab = "Fitted Values", ylab = "Standardized Residuals")
+abline(h = 0)
+qqnorm(rstandard(model_mlr_reduced))
+qqline(rstandard(model_mlr_reduced))
+
+# ------------------------------------------------
+# Step 10: Random Forest preparation
+rf_data <- accident_data %>% mutate(Severity = as.factor(Severity))
+
+# ------------------------------------------------
+# Step 11: Fit Random Forest model
+set.seed(123)
+rf_model <- randomForest(
+  Severity ~ Distance + Temperature + Humidity + Visibility + 
+    Wind_Speed + Pressure + Precipitation + Weather_Simple +
+    Rush_Hour + Weekend + Is_Daytime + Traffic_Signal_Flag + Road_Features + State,
+  data = rf_data,
+  ntree = 800,
+  importance = TRUE
+)
+
+print(rf_model)
+conf_matrix <- rf_model$confusion
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Overall Accuracy:", round(accuracy * 100, 2), "%"))
+
+# ------------------------------------------------
+# Step 12: Variable importance from Random Forest
+varImpPlot(rf_model, main = "Variable Importance (Random Forest)")
+importance(rf_model)
+
+# ------------------------------------------------
+# Step 13: US map of average severity by significant states
+state_avg <- accident_data_reduced %>%
+  group_by(State) %>%
+  summarise(mean_severity = mean(Severity)) %>%
+  mutate(state = tolower(state.name[match(State, state.abb)]))
+
+plot_usmap(data = state_avg, values = "mean_severity", color = "white") +
+  geom_text(data = usmap::us_map() %>% 
+              group_by(abbr) %>% 
+              summarise(long = mean(x), lat = mean(y)), 
+            aes(x = long, y = lat, label = abbr), 
+            size = 3, color = "black") +
+  scale_fill_continuous(name = "Avg Severity", low = "lightblue", high = "red") +
+  labs(title = "Avg Accident Severity by State") +
+  theme(legend.position = "right")
+
+# ------------------------------------------------
+# Step 14: Confusion matrix heatmap (Random Forest)
+cm <- as.data.frame(rf_model$confusion)
+cm$Actual <- rownames(cm)
+cm_long <- melt(cm, id.vars = "Actual", variable.name = "Predicted", value.name = "Count")
+
+ggplot(cm_long, aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile() +
+  geom_text(aes(label = Count), color = "white") +
+  scale_fill_gradient(low = "pink", high = "red") +
+  labs(title = "Confusion Matrix Heatmap", x = "Predicted", y = "Actual") +
+  theme_minimal()
+
+
+
+```
+
