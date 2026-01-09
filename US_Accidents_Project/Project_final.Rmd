@@ -1,6 +1,6 @@
 ---
 title: "Project"
-author: "Namitha Kuthani"
+author: "Shruti Gajre, Namitha Kuthani, Shrusthi"
 date: "2025-05-01"
 output: pdf_document
 ---
@@ -191,4 +191,5 @@ ggplot(cm_long, aes(x = Predicted, y = Actual, fill = Count)) +
 
 
 ```
+
 
